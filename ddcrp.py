@@ -202,23 +202,31 @@ class Ddcrp(object):
     else:
       return 2 * (self.h_mat[j][p] - self.h_mat[i][p]) * self.h_mat[j][p] / self.GetDist(min(i,j), max(i,j))
   
+  """
   def L1Deriv(self, q, p):
     deriv = 0
     for i in np.arange(self.batch_size):
       local_sum = 0
       for j in np.arange(i + 1):
-        #print "d2hDeriv", q, p, i, j, " : ", self.D2hDeriv(q,p,i,j)
         local_sum += self.GetDecayedDist(j, i) * self.D2hDeriv(q, p, i, j)
-      #point = np.fromfunction(lambda j, dummy: self.GetDecayedDist(j, i) * self.D2hDeriv(q, p, i, j), (i + 1, 1), dtype=float)
-      #if point == 0:
-      #  local_sum = 0
-      #else:
-      #  local_sum = point.sum()
       deriv += -self.D2hDeriv(q, p, i, self.c_parent[i]) + local_sum / self.totalDecayedDists[i]
     return deriv
+  """
 
-  def L2Deriv(self, p):
-    deriv = 0
+  def L1Deriv(self):
+    deriv1 = np.zeros((self.batch_size, self.dim))
+    for q in range(self.batch_size):
+      for p in range(self.dim):
+        for i in np.arange(self.batch_size):
+          local_sum = 0
+          for j in np.arange(i + 1):
+            local_sum += self.GetDecayedDist(j, i) * self.D2hDeriv(q, p, i, j)
+          deriv1[q][p] += -self.D2hDeriv(q, p, i, self.c_parent[i]) + local_sum / self.totalDecayedDists[i]
+    return deriv1
+
+
+  def L2Deriv(self):
+    deriv2 = np.zeros((self.batch_size, self.dim))
     for i in range(self.batch_size):
       if self.GetRoot(i) != i:
         pass
@@ -229,20 +237,24 @@ class Ddcrp(object):
         h_cur = self.h_mat[cluster_cur]
         h_cur_mean = h_cur.mean(0)
         Lambda_n_k = self.Lambda_0 + self.CSSP(h_cur) + self.kappa_0 * n_k / (self.kappa_0+n_k) * np.outer(h_cur_mean - self.mu_0, h_cur_mean - self.mu_0)
-        LambdaDeriv = np.zeros((self.dim, self.dim))
-        LambdaDeriv[p] += h_cur_mean - self.mu_0
-        LambdaDeriv[:, p] += h_cur_mean - self.mu_0
-        deriv += -nu_n_k * self.kappa_0 * n_k / (2 * (self.kappa_0 + n_k)) * np.trace(np.dot(np.linalg.inv(Lambda_n_k), LambdaDeriv))      
-    return deriv               
+        for p in range(self.dim):
+          B = np.zeros((self.dim, self.dim))
+          B[p] += (h_cur_mean - self.mu_0) / n_k
+          B[:, p] += (h_cur_mean - self.mu_0) / n_k
+          for q in cluster_cur:
+            A = np.zeros((self.dim, self.dim))
+            A[p] += self.h_mat[q] - h_cur_mean
+            A[:, p] += self.h_mat[q] - h_cur_mean
+            LambdaDeriv = A + (self.kappa_0 * n_k) / (self.kappa_0 + n_k) * B
+            deriv2[q][p] = -nu_n_k / 2 * np.trace(np.dot(np.linalg.inv(Lambda_n_k), LambdaDeriv))      
+    return deriv2               
     
   def BatchGD(self):
     deriv_total = np.zeros(self.dim)
-    l1deriv = np.zeros(self.dim)
-    l2deriv = np.zeros(self.dim)
-    for p in range(self.dim):
-      for q in range(self.batch_size):
-        l1deriv[p] += self.L1Deriv(q, p)
-      l2deriv[p] = self.L2Deriv(p)
+    l1deriv = np.zeros((self.batch_size, self.dim))
+    l2deriv = np.zeros((self.batch_size, self.dim))
+    l1deriv = self.L1Deriv()
+    l2deriv = self.L2Deriv()
     deriv_total = l1deriv + l2deriv
     print "l1deriv: ", l1deriv
     print "l2deriv: ", l2deriv
